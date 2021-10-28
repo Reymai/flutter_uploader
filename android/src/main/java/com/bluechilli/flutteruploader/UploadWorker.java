@@ -252,7 +252,7 @@ public class UploadWorker extends ListenableWorker implements CountProgressListe
       ResponseBody body = response.body();
 
       hasJsonResponse =
-          responseContentType != null && responseContentType.contains("json") && body != null;
+          responseContentType != null && (responseContentType.contains("json") || responseContentType.contains("xml")) && body != null;
 
       for (String name : rheaders.names()) {
         String value = rheaders.get(name);
