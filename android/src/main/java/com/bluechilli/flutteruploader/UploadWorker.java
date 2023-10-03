@@ -61,6 +61,7 @@ public class UploadWorker extends ListenableWorker implements CountProgressListe
   public static final String EXTRA_ID = "id";
   public static final String EXTRA_HEADERS = "headers";
   private static final String TAG = UploadWorker.class.getSimpleName();
+  private static final HashMap<String, Integer> progressMap = new HashMap<>();
   private static final int UPDATE_STEP = 0;
   private static final int DEFAULT_ERROR_STATUS_CODE = 500;
 
@@ -107,6 +108,9 @@ public class UploadWorker extends ListenableWorker implements CountProgressListe
 
   @NonNull
   public Result doWorkInternal() {
+    if (isCancelled) {
+      return Result.failure();
+    }
     String url = getInputData().getString(ARG_URL);
     String method = getInputData().getString(ARG_METHOD);
     int timeout = getInputData().getInt(ARG_REQUEST_TIMEOUT, 3600);
@@ -140,6 +144,10 @@ public class UploadWorker extends ListenableWorker implements CountProgressListe
 
       if (filesJson != null) {
         files = gson.fromJson(filesJson, fileItemType);
+      }
+
+      if (isCancelled) {
+        return Result.failure();
       }
 
       final RequestBody innerRequestBody;
@@ -192,6 +200,10 @@ public class UploadWorker extends ListenableWorker implements CountProgressListe
         innerRequestBody = formRequestBuilder.build();
       }
 
+      if (isCancelled) {
+        return Result.failure();
+      }
+
       RequestBody requestBody = new CountingRequestBody(innerRequestBody, getId().toString(), this);
       Request.Builder requestBuilder = new Request.Builder();
 
@@ -232,12 +244,20 @@ public class UploadWorker extends ListenableWorker implements CountProgressListe
 
       Log.d(TAG, "Start uploading for " + tag);
 
+      if (isCancelled) {
+        return Result.failure();
+      }
+
       OkHttpClient client =
           new OkHttpClient.Builder()
               .connectTimeout((long) timeout, TimeUnit.SECONDS)
               .writeTimeout((long) timeout, TimeUnit.SECONDS)
               .readTimeout((long) timeout, TimeUnit.SECONDS)
               .build();
+
+      if (isCancelled) {
+        return Result.failure();
+      }
 
       call = client.newCall(request);
       Response response = call.execute();
@@ -253,6 +273,10 @@ public class UploadWorker extends ListenableWorker implements CountProgressListe
 
       hasJsonResponse =
           responseContentType != null && (responseContentType.contains("json") || responseContentType.contains("xml")) && body != null;
+
+      if (isCancelled) {
+        return Result.failure();
+      }
 
       for (String name : rheaders.names()) {
         String value = rheaders.get(name);
@@ -325,6 +349,7 @@ public class UploadWorker extends ListenableWorker implements CountProgressListe
       return handleException(context, ex, "upload error");
     } finally {
       call = null;
+      progressMap.remove(getId().toString());
     }
   }
 
@@ -461,6 +486,12 @@ public class UploadWorker extends ListenableWorker implements CountProgressListe
     double p = ((double) bytesWritten / (double) contentLength) * 100;
     int progress = (int) Math.round(p);
 
+    if (progressMap.containsKey(taskId) && progressMap.get(taskId) == progress) {
+      return;
+    }
+
+    progressMap.put(taskId, progress);
+
     Log.d(
         TAG,
         "taskId: "
@@ -483,6 +514,7 @@ public class UploadWorker extends ListenableWorker implements CountProgressListe
       isCancelled = true;
       if (call != null && !call.isCanceled()) {
         call.cancel();
+        progressMap.remove(getId().toString());
       }
     } catch (Exception ex) {
       Log.d(TAG, "Upload Request cancelled", ex);
@@ -494,6 +526,8 @@ public class UploadWorker extends ListenableWorker implements CountProgressListe
     if (isCancelled) {
       return;
     }
+
+    progressMap.remove(getId().toString());
 
     Log.d(
         TAG,
